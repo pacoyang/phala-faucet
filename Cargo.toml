@@ -1,0 +1,36 @@
+[package]
+name = "phala_faucet"
+version = "0.1.0"
+authors = ["[your_name] <[your_email]>"]
+edition = "2021"
+
+[dependencies]
+ink = { version = "4.2.0", default-features = false }
+
+pink-extension = { version = "0.4", default-features = false }
+pink-subrpc = { version = "0.4.2", default-features = false }
+pink-web3 = { version = "0.20.1", default-features = false, features = ["pink", "signing"] }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+
+scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
+scale-info = { version = "2.6", default-features = false, features = ["derive"], optional = true }
+
+[dev-dependencies]
+ink_e2e = "4.2.0"
+pink-extension-runtime = "0.4"
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "ink/std",
+    "scale/std",
+    "scale-info/std",
+    "pink-extension/std",
+    "pink-subrpc/std",
+    "pink-web3/std",
+]
+ink-as-dependency = []
+e2e-tests = []
