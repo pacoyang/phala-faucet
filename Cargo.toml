@@ -11,6 +11,7 @@ pink-extension = { version = "0.4", default-features = false }
 pink-subrpc = { version = "0.4.2", default-features = false }
 pink-web3 = { version = "0.20.1", default-features = false, features = ["pink", "signing"] }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+phat_js = { version = "0.1", default-features = false }
 
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2.6", default-features = false, features = ["derive"], optional = true }
@@ -31,6 +32,7 @@ std = [
     "pink-extension/std",
     "pink-subrpc/std",
     "pink-web3/std",
+    "phat_js/std",
 ]
 ink-as-dependency = []
 e2e-tests = []

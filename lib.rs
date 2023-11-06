@@ -13,6 +13,7 @@ mod phala_faucet {
     use pink_subrpc::{
         create_transaction, send_transaction, ExtraParam,
     };
+    use phat_js;
 
     #[ink(storage)]
     pub struct PhalaFaucet {
@@ -21,6 +22,8 @@ mod phala_faucet {
         public_key: [u8; 32],
         chain: String,
         rpc_endpoint: String,
+        js_code: String,
+        after_js_code: Option<String>
     }
 
     #[derive(Encode, Decode, PartialEq, Eq, Clone, Debug)]
@@ -42,13 +45,14 @@ mod phala_faucet {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
         BadOrigin,
+        JsError(String),
     }
 
     pub type Result<T> = core::result::Result<T, Error>;
 
     impl PhalaFaucet {
         #[ink(constructor)]
-        pub fn default(salt: String, chain: String, rpc_endpoint: String) -> Self {
+        pub fn default(salt: String, chain: String, rpc_endpoint: String, js_code: String, after_js_code: Option<String>) -> Self {
             let private_key =
                 pink_web3::keys::pink::KeyPair::derive_keypair(salt.as_bytes()).private_key();
             let public_key = signing::get_public_key(&private_key, SigType::Sr25519)
@@ -60,6 +64,8 @@ mod phala_faucet {
                 private_key,
                 chain,
                 rpc_endpoint,
+                js_code,
+                after_js_code,
             }
         }
 
@@ -92,6 +98,25 @@ mod phala_faucet {
             Ok(())
         }
 
+        #[ink(message)]
+        pub fn get_js_code(&self) -> String {
+            self.js_code.clone()
+        }
+
+        #[ink(message)]
+        pub fn set_js_code(&mut self, js_code: String) -> Result<()> {
+            self.ensure_admin()?;
+            self.js_code = js_code;
+            Ok(())
+        }
+
+        #[ink(message)]
+        pub fn set_after_js_code(&mut self, js_code: String) -> Result<()> {
+            self.ensure_admin()?;
+            self.after_js_code = Some(js_code);
+            Ok(())
+        }
+
         fn ensure_admin(&self) -> Result<()> {
             if self.env().caller() == self.admin {
                 Ok(())
@@ -117,7 +142,9 @@ mod phala_faucet {
         }
 
         #[ink(message)]
-        pub fn balances_transfer(&self, pha: u128) -> Result<Vec<u8>> {
+        pub fn balances_transfer(&self) -> Result<Vec<u8>> {
+            let js_result = self.run_js_code(self.js_code.clone(), alloc::vec![hex::encode(Self::env().caller())])?;
+            let pha = js_result.parse::<u128>().unwrap();
             let recipient: MultiAddress<AccountId, u32>  = MultiAddress::Id(Self::env().caller());
             let signed_tx = create_transaction(
                 &self.private_key,
@@ -129,9 +156,28 @@ mod phala_faucet {
                 ExtraParam::default(),
             )
             .unwrap();
-
             let tx_id = send_transaction(&self.rpc_endpoint, &signed_tx).unwrap();
+            if let Some(after_js_code) = self.after_js_code.clone() {
+                let _ = self.run_js_code(after_js_code.clone(), alloc::vec![hex::encode(Self::env().caller())])?;
+            }
             Ok(tx_id)
+        }
+
+        #[ink(message)]
+        pub fn run_js_code(&self, js_code: String, args: Vec<String>) -> Result<String> {
+            let output = match phat_js::eval(&js_code, &args) {
+                Ok(output) => output,
+                Err(e) => {
+                    return Err(Error::JsError(e));
+                }
+            };
+            let output_as_bytes = match output {
+                phat_js::Output::String(s) => s.into_bytes(),
+                phat_js::Output::Bytes(b) => b,
+                phat_js::Output::Undefined => panic!("Undefined"),
+
+            };
+            Ok(String::from_utf8(output_as_bytes).unwrap())
         }
     }
 
