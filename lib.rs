@@ -70,8 +70,9 @@ mod phala_faucet {
         }
 
         #[ink(message)]
-        pub fn get_public_key(&self) -> String {
-            hex::encode(self.public_key)
+        pub fn get_public_key(&self) -> AccountId {
+            let account_id: AccountId = self.public_key.into();
+            account_id
         }
 
         #[ink(message)]
