@@ -69,17 +69,32 @@ mod phala_faucet {
             }
         }
 
+        ///
+        /// The SS58 format address of the faucet
+        ///
+        /// @category core
+        ///
         #[ink(message)]
         pub fn get_public_key(&self) -> AccountId {
             let account_id: AccountId = self.public_key.into();
             account_id
         }
 
+        ///
+        /// The Chain ID, it requires substrate network.
+        ///
+        /// @category core
+        ///
         #[ink(message)]
         pub fn get_chain(&self) -> String {
             self.chain.clone()
         }
 
+        ///
+        /// The Chain ID, it requires substrate network.
+        ///
+        /// @category core
+        ///
         #[ink(message)]
         pub fn set_chain(&mut self, chain: String) -> Result<()> {
             self.ensure_admin()?;
@@ -87,11 +102,21 @@ mod phala_faucet {
             Ok(())
         }
 
+        ///
+        /// The HTTP RPC endpoint.
+        ///
+        /// @category core
+        ///
         #[ink(message)]
         pub fn get_rpc_endpoint(&self) -> String {
             self.rpc_endpoint.clone()
         }
 
+        ///
+        /// Set The HTTP RPC endpoint.
+        ///
+        /// @category core
+        ///
         #[ink(message)]
         pub fn set_rpc_endpoint(&mut self, rpc_endpoint: String) -> Result<()> {
             self.ensure_admin()?;
@@ -99,11 +124,24 @@ mod phala_faucet {
             Ok(())
         }
 
+        ///
+        /// The pre-condition js script, it should returns the total amount of test-PHA can claim.
+        ///
+        /// @category core
+        ///
         #[ink(message)]
         pub fn get_js_code(&self) -> String {
             self.js_code.clone()
         }
 
+        ///
+        /// Set the pre-condition js script, it should returns the total amount of test-PHA can claim.
+        ///
+        /// @category core
+        ///
+        /// @ui js_code widget codemirror
+        /// @ui js_code options.lang javascript
+        ///
         #[ink(message)]
         pub fn set_js_code(&mut self, js_code: String) -> Result<()> {
             self.ensure_admin()?;
@@ -111,6 +149,14 @@ mod phala_faucet {
             Ok(())
         }
 
+        ///
+        /// The post-processing js script.
+        ///
+        /// @category core
+        ///
+        /// @ui js_code widget codemirror
+        /// @ui js_code options.lang javascript
+        ///
         #[ink(message)]
         pub fn set_after_js_code(&mut self, js_code: String) -> Result<()> {
             self.ensure_admin()?;
@@ -118,6 +164,11 @@ mod phala_faucet {
             Ok(())
         }
 
+        ///
+        /// The post-processing js script.
+        ///
+        /// @category core
+        ///
         fn ensure_admin(&self) -> Result<()> {
             if self.env().caller() == self.admin {
                 Ok(())
@@ -126,22 +177,27 @@ mod phala_faucet {
             }
         }
 
-        #[ink(message)]
-        pub fn system_remark(&self, remark: String) -> Result<Vec<u8>> {
-            let signed_tx = create_transaction(
-                &self.private_key,
-                &self.chain,
-                &self.rpc_endpoint,
-                1u8,
-                0u8,
-                remark,
-                ExtraParam::default(),
-            )
-            .unwrap();
-            let tx_id = send_transaction(&self.rpc_endpoint, &signed_tx).unwrap();
-            Ok(tx_id)
-        }
+        // #[ink(message)]
+        // pub fn system_remark(&self, remark: String) -> Result<Vec<u8>> {
+        //     let signed_tx = create_transaction(
+        //         &self.private_key,
+        //         &self.chain,
+        //         &self.rpc_endpoint,
+        //         1u8,
+        //         0u8,
+        //         remark,
+        //         ExtraParam::default(),
+        //     )
+        //     .unwrap();
+        //     let tx_id = send_transaction(&self.rpc_endpoint, &signed_tx).unwrap();
+        //     Ok(tx_id)
+        // }
 
+        ///
+        /// The faucet will transfer test-PHA to the caller.
+        ///
+        /// @category faucet
+        ///
         #[ink(message)]
         pub fn balances_transfer(&self) -> Result<Vec<u8>> {
             let js_result = self.run_js_code(self.js_code.clone(), alloc::vec![hex::encode(Self::env().caller())])?;
@@ -164,6 +220,9 @@ mod phala_faucet {
             Ok(tx_id)
         }
 
+        ///
+        /// @category core
+        ///
         #[ink(message)]
         pub fn run_js_code(&self, js_code: String, args: Vec<String>) -> Result<String> {
             let output = match phat_js::eval(&js_code, &args) {
