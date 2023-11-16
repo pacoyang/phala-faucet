@@ -1,6 +1,6 @@
 import '@phala/pink-env'
 
-export default function main(userAddr: string, faucetAddr: string, claimBarrier: string, coldDownSecs: string) {
+export default function main(faucetAddr: string, userAddr: string, evmAddress: string, claimBarrier: string, coldDownSecs: string) {
   const upper = Number(claimBarrier)
   const coldDown = Number(coldDownSecs)
   const options = {
@@ -20,7 +20,7 @@ export default function main(userAddr: string, faucetAddr: string, claimBarrier:
   })
 
   const historyData = JSON.parse(historyQuery.body as string)
-  const timestamp = historyData?.items?.[0].indexer?.blockTime
+  const timestamp = historyData?.items?.[0]?.indexer?.blockTime
   const now = (new Date()).getTime()
   const diff = now - timestamp
   const needColdDown = diff < coldDown * 1000

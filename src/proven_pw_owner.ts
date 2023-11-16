@@ -1,11 +1,23 @@
 import '@phala/pink-env'
 
-export default function main(callerAddress: string) {
+interface CallerInfo {
+  ss58_address: String
+  evm_address: String
+}
+
+interface Env {
+  PW_API_URL: string
+}
+
+export default function main(caller_info: string, secret: string) {
+  const caller: CallerInfo = JSON.parse(caller_info)
+  const env: Env = JSON.parse(secret)
+
   const search = JSON.stringify({
-    "json":{"owner": callerAddress, "collectionIds":[2]}
+    "json":{"owner": caller.ss58_address, "collectionIds":[2]}
   })
   const pwNftQuery = pink.httpRequest({
-    url: `https://api.phala.world/rpc/nfts.list?input=${encodeURIComponent(search)}`,
+    url: `${env.PW_API_URL}/rpc/nfts.list?input=${encodeURIComponent(search)}`,
     method: 'GET',
     headers: {
       'User-Agent': 'phat-contract',
@@ -20,8 +32,6 @@ export default function main(callerAddress: string) {
 
   const nftData = JSON.parse(pwNftQuery.body as string)
   const nftCounts = nftData?.result?.data?.json?.items?.length || 0
-
-  // console.log(nftData?.result?.data?.json?.items)
 
   return nftCounts > 0 ? 100 : 0
 }
