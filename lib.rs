@@ -7,7 +7,7 @@ use pink_extension as pink;
 mod phala_faucet {
     use super::pink;
     use crate::alloc::string::ToString;
-    use alloc::{string::String, vec::Vec};
+    use alloc::{string::String, vec::Vec, boxed::Box};
     use scale::{Decode, Encode, Compact};
     use pink::chain_extension::{signing, SigType};
     use pink_subrpc::{
@@ -16,8 +16,9 @@ mod phala_faucet {
     };
     use phat_js;
     use ink::env::hash;
-    use ink::storage::traits::StorageLayout;
     use ink::storage::Mapping;
+    #[allow(unused_imports)]
+    use ink::storage::traits::StorageLayout;
 
     #[ink(storage)]
     pub struct PhalaFaucet {
@@ -491,14 +492,12 @@ mod phala_faucet {
         }
 
         fn get_caller_info(&self, account_id: AccountId, evm_caller: Option<EvmCaller>) -> CallerInfo {
-            // @FIXME the version should be `self.chain`
-            let version = get_ss58addr_version("phala".into()).unwrap();
+            let chain_id = Box::leak(self.chain.clone().into_boxed_str());
+            let version_prefix = get_ss58addr_version(chain_id).unwrap().prefix();
             let account: [u8; 32] = *Self::env().caller().as_ref();
-            let ss58_address = account.to_ss58check_with_version(version.prefix());
-
-            let version = get_ss58addr_version("phala".into()).unwrap();
+            let ss58_address = account.to_ss58check_with_version(version_prefix);
             let owner: [u8; 32] = *self.owner.as_ref();
-            let owner_addr = owner.to_ss58check_with_version(version.prefix());
+            let owner_addr = owner.to_ss58check_with_version(version_prefix);
 
             // When we get the compressed public key and address, we assume that signed by EVM
             // wallet client.
