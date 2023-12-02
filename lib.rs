@@ -571,7 +571,7 @@ mod phala_faucet {
 
             let hashed = self
                 .env()
-                .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes());
+                .hash_bytes::<ink::env::hash::Blake2x256>(js_code.trim().as_bytes());
             let message = alloc::format!("{}{}{}", hex::encode(self.env().caller()), hex::encode(hashed), result);
             let signature = signing::sign(message.as_bytes(), &self.private_key, SigType::Sr25519);
             let js_code_hash: [u8; 32] = hashed.into();
@@ -594,7 +594,7 @@ mod phala_faucet {
             // check is it in the registered quest list
             let hashed = self
                 .env()
-                .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes());
+                .hash_bytes::<ink::env::hash::Blake2x256>(js_code.trim().as_bytes());
             if self.quest_script_hash.iter().find(|&x| x == &hashed).is_none() {
                 return Err(Error::BadQuestScript);
             }
