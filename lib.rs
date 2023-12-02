@@ -481,6 +481,33 @@ mod phala_faucet {
         /// @category quests
         ///
         #[ink(message)]
+        pub fn remove_quest_script(&mut self, hash: [u8; 32]) -> Result<()> {
+            self.ensure_owner()?;
+            let mut index = 0;
+            for i in 0..self.quest_script_hash.len() {
+                if self.quest_script_hash[i] == hash {
+                    index = i;
+                    break;
+                }
+            }
+            self.quest_script_hash.remove(index);
+            self.quest_script_secrets.take(&hash);
+            let mut counts = 0;
+            for id in 0..self.next_id {
+                if let Some(record) = self.quest_result.get(id) {
+                    if record.js_code_hash == hash {
+                        self.quest_result.take(counts);
+                    }
+                    counts += 1;
+                }
+            }
+            Ok(())
+        }
+
+        ///
+        /// @category quests
+        ///
+        #[ink(message)]
         pub fn get_all_registered_quest_script_hash(&self) -> Vec<[u8; 32]> {
             self.quest_script_hash.clone()
         }
