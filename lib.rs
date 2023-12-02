@@ -492,9 +492,11 @@ mod phala_faucet {
         /// @privilege owner
         ///
         #[ink(message)]
-        pub fn add_quest_script(&mut self, hash: [u8; 32]) -> Result<()> {
+        pub fn register_quest_script(&mut self, items: Vec<[u8; 32]>) -> Result<()> {
             self.ensure_owner()?;
-            self.quest_script_hash.push(hash);
+            for h in items {
+                self.quest_script_hash.push(h);
+            }
             Ok(())
         }
 
@@ -503,7 +505,7 @@ mod phala_faucet {
         /// @privilege owner
         ///
         #[ink(message)]
-        pub fn remove_quest_script(&mut self, hash: [u8; 32]) -> Result<()> {
+        pub fn unregister_quest_script(&mut self, hash: [u8; 32]) -> Result<()> {
             self.ensure_owner()?;
             let mut index = 0;
             for i in 0..self.quest_script_hash.len() {
@@ -530,7 +532,7 @@ mod phala_faucet {
         /// @category quests
         ///
         #[ink(message)]
-        pub fn get_all_registered_quest_script_hash(&self) -> Vec<[u8; 32]> {
+        pub fn get_registered_quest_script(&self) -> Vec<[u8; 32]> {
             self.quest_script_hash.clone()
         }
 
