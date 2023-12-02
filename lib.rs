@@ -126,6 +126,18 @@ mod phala_faucet {
     pub type Result<T> = core::result::Result<T, Error>;
 
     impl PhalaFaucet {
+        ///
+        /// Create a new faucet contract.
+        ///
+        /// - salt: The salt for the faucet account, it will be used to generate the private key. Optional.
+        /// - rpc_endpoint: The HTTP RPC endpoint, it should begin with https:// or http://
+        /// - chain: The chain ID, it requires substrate network. Optional, default is "phala".
+        /// - call_index: The call index for the faucet transaction. Optional, default is (0x07, 0x00), `balances.transferAllowDeath`.
+        /// - account_check_js: The JS code for checking the account allowance. Optional.
+        /// - base_token_amount: The base token amount for each claim. Optional, default is 5 PHA.
+        /// - balance_threshold: The balance threshold, if the balance of the caller is more than this threshold, it will be rejected. Optional, default is 5,000 PHA.
+        /// - claim_peridical_seconds: The claim peridical seconds, if the caller claimed in this period, it will be rejected. Optional, default is 24 hours.
+        ///
         #[ink(constructor)]
         pub fn default(
             salt: Option<String>, rpc_endpoint: String, chain: Option<String>, call_index: Option<(u8, u8)>, account_check_js: Option<String>,
@@ -179,6 +191,7 @@ mod phala_faucet {
         /// Override the private key of the faucet account, owner-only.
         ///
         /// @category settings
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn import_private_key(&mut self, private_key: Vec<u8>) -> Result<()> {
@@ -204,6 +217,7 @@ mod phala_faucet {
         /// The Chain ID, it requires substrate network. Owner-only.
         ///
         /// @category settings
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn set_chain_id(&mut self, chain: String) -> Result<()> {
@@ -216,6 +230,7 @@ mod phala_faucet {
         /// The HTTP RPC endpoint, only owner can access that so we can use private endpoint here. Owner-only.
         ///
         /// @category settings
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn get_rpc_endpoint(&self) -> Result<String> {
@@ -227,6 +242,7 @@ mod phala_faucet {
         /// Set the HTTP RPC endpoint, owner-only. It should begin with https:// or http://
         ///
         /// @category settings
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn set_rpc_endpoint(&mut self, rpc_endpoint: String) -> Result<()> {
@@ -243,6 +259,7 @@ mod phala_faucet {
         /// Set the allowance check script. Owner-only.
         ///
         /// @category settings
+        /// @privilege owner
         ///
         /// @ui js_code widget codemirror
         /// @ui js_code options.lang javascript
@@ -279,6 +296,7 @@ mod phala_faucet {
         /// Set the base token amount for each claim. Owner-only.
         ///
         /// @category settings
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn set_base_token_amount(&mut self, amount: u128) -> Result<()> {
@@ -301,6 +319,7 @@ mod phala_faucet {
         /// Set the balance threshold, if the balance of the caller is more than this threshold, it will be rejected. Owner-only.
         ///
         /// @category settings
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn set_balance_threshold(&mut self, amount: u128) -> Result<()> {
@@ -323,6 +342,7 @@ mod phala_faucet {
         /// Set the claim peridical seconds, if the caller claimed in this period, it will be rejected. Owner-only.
         ///
         /// @category settings
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn set_claim_peridical_seconds(&mut self, seconds: u64) -> Result<()> {
@@ -469,6 +489,7 @@ mod phala_faucet {
 
         ///
         /// @category quests
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn add_quest_script(&mut self, hash: [u8; 32]) -> Result<()> {
@@ -479,6 +500,7 @@ mod phala_faucet {
 
         ///
         /// @category quests
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn remove_quest_script(&mut self, hash: [u8; 32]) -> Result<()> {
@@ -514,6 +536,7 @@ mod phala_faucet {
 
         ///
         /// @category quests
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn set_quest_script_secret(&mut self, hash: [u8; 32], secret: String) -> Result<()> {
@@ -524,6 +547,7 @@ mod phala_faucet {
 
         ///
         /// @category quests
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn get_quest_script_secret(&self, hash: [u8; 32]) -> Result<String> {
@@ -643,6 +667,7 @@ mod phala_faucet {
         /// Get all quest result, owner-only.
         ///
         /// @category quests
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn get_all_quest_result(&self) -> Result<Vec<QuestResultStore>> {
@@ -660,6 +685,7 @@ mod phala_faucet {
         /// Import all quest result, owner-only. It propose for the contract upgradable.
         ///
         /// @category quests
+        /// @privilege owner
         ///
         #[ink(message)]
         pub fn import_all_quest_result(&mut self, results: Vec<QuestResultStore>) -> Result<()> {
