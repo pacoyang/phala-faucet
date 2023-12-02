@@ -167,9 +167,6 @@ mod phala_faucet {
             let public_key = signing::get_public_key(&private_key, SigType::Sr25519)
                 .try_into()
                 .unwrap();
-            if !rpc_endpoint.starts_with("https://") && !rpc_endpoint.starts_with("http://") {
-                panic!("Invalid RPC endpoint");
-            }
             Self {
                 owner: Self::env().caller(),
                 public_key,
