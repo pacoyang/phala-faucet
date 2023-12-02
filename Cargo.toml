@@ -1,6 +1,6 @@
 [package]
 name = "phala_faucet"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["[your_name] <[your_email]>"]
 edition = "2021"
 
