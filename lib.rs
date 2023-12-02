@@ -117,6 +117,25 @@ mod phala_faucet {
         SubstrateTransactionFailed,
     }
 
+    // Events
+
+    #[ink(event)]
+    pub struct QuestScriptRegistered {
+        hash: [u8; 32],
+    }
+
+    #[ink(event)]
+    pub struct QuestScriptUnregistered {
+        hash: [u8; 32],
+    }
+
+    #[ink(event)]
+    pub struct FaucetAccountChanged {
+        address: AccountId,
+    }
+
+    //
+
     struct CallerInfo {
         owner_ss58_address: String,
         ss58_address: String,
@@ -200,6 +219,10 @@ mod phala_faucet {
             self.public_key = signing::get_public_key(&self.private_key, SigType::Sr25519)
                 .try_into()
                 .unwrap();
+            let address: AccountId = self.public_key.into();
+            self.env().emit_event(FaucetAccountChanged {
+                address,
+            });
             Ok(())
         }
 
@@ -494,8 +517,11 @@ mod phala_faucet {
         #[ink(message)]
         pub fn register_quest_script(&mut self, items: Vec<[u8; 32]>) -> Result<()> {
             self.ensure_owner()?;
-            for h in items {
-                self.quest_script_hash.push(h);
+            for hash in items {
+                self.quest_script_hash.push(hash);
+                self.env().emit_event(QuestScriptRegistered {
+                    hash,
+                })
             }
             Ok(())
         }
@@ -525,6 +551,9 @@ mod phala_faucet {
                     counts += 1;
                 }
             }
+            self.env().emit_event(QuestScriptUnregistered {
+                hash,
+            });
             Ok(())
         }
 
