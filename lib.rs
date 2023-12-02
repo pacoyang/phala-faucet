@@ -19,6 +19,7 @@ mod phala_faucet {
     use ink::storage::Mapping;
     #[allow(unused_imports)]
     use ink::storage::traits::StorageLayout;
+    use this_crate::{version_tuple, VersionTuple};
 
     #[ink(storage)]
     pub struct PhalaFaucet {
@@ -31,10 +32,10 @@ mod phala_faucet {
         rpc_endpoint: String,
         call_index: (u8, u8),
 
-        // We don't save the proven scripts inside the contract, instead, we save the hash of those
+        // We don't save the quest scripts inside the contract, instead, we save the hash of those
         // scripts.
-        proven_script_hash: Vec<[u8; 32]>,
-        proven_script_secrets: Mapping<[u8; 32], String>,
+        quest_script_hash: Vec<[u8; 32]>,
+        quest_script_secrets: Mapping<[u8; 32], String>,
 
         // Then base token amount an account can claim each time slot.
         base_token_amount: u128,
@@ -44,12 +45,12 @@ mod phala_faucet {
         account_check_js: String,
 
         next_id: u64,
-        proven_scores: Mapping<u64, ProvenScore>,
+        quest_result: Mapping<u64, QuestResultStore>,
     }
 
     #[derive(Encode, Decode, Debug)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
-    pub struct ProvenScore {
+    pub struct QuestResultStore {
         address: AccountId,
         js_code_hash: [u8; 32],
         score: u128,
@@ -72,7 +73,7 @@ mod phala_faucet {
 
     #[derive(Encode, Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub struct ProvenResult {
+    pub struct QuestResult {
         pub js_code_hash: [u8; 32],
         pub result: u128,
         pub signature: Vec<u8>,
@@ -87,9 +88,21 @@ mod phala_faucet {
 
     #[derive(Encode, Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub struct FaucetResult {
+    pub struct ClaimResult {
         pub tx_id: Vec<u8>,
         pub amount: u128,
+    }
+
+    #[derive(Encode, Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub struct State {
+        pub can_claim: bool,
+        pub claim_estimated_amount: u128,
+        pub base_token_amount: u128,
+        pub balance_threshold: u128,
+        pub claim_peridical_seconds: u64,
+        pub eligibility: Vec<[u8; 32]>,
+        pub registered_quests: Vec<[u8; 32]>,
     }
 
     #[derive(Encode, Decode)]
@@ -97,9 +110,11 @@ mod phala_faucet {
     pub enum Error {
         BadOrigin,
         JsError(String),
-        BadProvenScript,
-        BadProvenScore,
+        BadQuestScript,
+        BadQuestResultStore,
         NotNeedFaucet,
+        InvalidRpcEndpoint,
+        SubstrateTransactionFailed,
     }
 
     struct CallerInfo {
@@ -112,67 +127,95 @@ mod phala_faucet {
 
     impl PhalaFaucet {
         #[ink(constructor)]
-        pub fn default(salt: Option<String>, rpc_endpoint: String, chain: Option<String>, call_index: (u8, u8), account_check_js: String) -> Self {
+        pub fn default(
+            salt: Option<String>, rpc_endpoint: String, chain: Option<String>, call_index: Option<(u8, u8)>, account_check_js: Option<String>,
+            base_token_amount: Option<u128>, balance_threshold: Option<u128>, claim_peridical_seconds: Option<u64>
+        ) -> Self {
             let nonce = salt.unwrap_or_default();
             let private_key = pink_web3::keys::pink::KeyPair::derive_keypair(nonce.as_bytes()).private_key();
             let public_key = signing::get_public_key(&private_key, SigType::Sr25519)
                 .try_into()
                 .unwrap();
+            if !rpc_endpoint.starts_with("https://") && !rpc_endpoint.starts_with("http://") {
+                panic!("Invalid RPC endpoint");
+            }
             Self {
                 owner: Self::env().caller(),
                 public_key,
                 private_key,
                 chain: chain.unwrap_or("phala".into()),
                 rpc_endpoint,
-                call_index,
-                proven_script_hash: Default::default(),
-                proven_script_secrets: Mapping::default(),
+                call_index: call_index.unwrap_or((0x07, 0x00)),
+                quest_script_hash: Default::default(),
+                quest_script_secrets: Mapping::default(),
                 next_id: 0,
-                proven_scores: Mapping::default(),
-                base_token_amount: 1_000_000_000_000_u128 * 5,      // 5 PHA
-                balance_threshold: 1_000_000_000_000_u128 * 5_000,  // 5,000 PHA
-                claim_peridical_seconds: 60 * 60 * 24,              // 24 hours
-                account_check_js,
+                quest_result: Mapping::default(),
+                base_token_amount: base_token_amount.unwrap_or(1_000_000_000_000_u128 * 5),      // 5 PHA
+                balance_threshold: balance_threshold.unwrap_or(1_000_000_000_000_u128 * 5_000),  // 5,000 PHA
+                claim_peridical_seconds: claim_peridical_seconds.unwrap_or(60 * 60 * 24),        // 24 hours
+                account_check_js: account_check_js.unwrap_or("(() => { return true; })();".into()),
             }
         }
 
+        // -------------------------------------------------------------------------------------------------------------
+        //
+        // Maintaining APIs for the owner.
+        //
+        // -------------------------------------------------------------------------------------------------------------
+
         ///
-        /// The SS58 format address of the faucet
+        /// The private key for the faucet account, owner-only. 
         ///
-        /// @category core
+        /// @category settings
+        ///
         ///
         #[ink(message)]
-        pub fn get_public_key(&self) -> AccountId {
-            let account_id: AccountId = self.public_key.into();
-            account_id
+        pub fn export_private_key(&self) -> Result<Vec<u8>> {
+            self.ensure_owner()?;
+            Ok(self.private_key.to_vec())
+        }
+
+        ///
+        /// Override the private key of the faucet account, owner-only.
+        ///
+        /// @category settings
+        ///
+        #[ink(message)]
+        pub fn import_private_key(&mut self, private_key: Vec<u8>) -> Result<()> {
+            self.ensure_owner()?;
+            self.private_key = private_key.try_into().unwrap();
+            self.public_key = signing::get_public_key(&self.private_key, SigType::Sr25519)
+                .try_into()
+                .unwrap();
+            Ok(())
         }
 
         ///
         /// The Chain ID, it requires substrate network.
         ///
-        /// @category core
+        /// @category settings
         ///
         #[ink(message)]
-        pub fn get_chain(&self) -> String {
+        pub fn get_chain_id(&self) -> String {
             self.chain.clone()
         }
 
         ///
-        /// The Chain ID, it requires substrate network.
+        /// The Chain ID, it requires substrate network. Owner-only.
         ///
-        /// @category core
+        /// @category settings
         ///
         #[ink(message)]
-        pub fn set_chain(&mut self, chain: String) -> Result<()> {
+        pub fn set_chain_id(&mut self, chain: String) -> Result<()> {
             self.ensure_owner()?;
             self.chain = chain;
             Ok(())
         }
 
         ///
-        /// The HTTP RPC endpoint, only owner can access that so we can use private endpoint here.
+        /// The HTTP RPC endpoint, only owner can access that so we can use private endpoint here. Owner-only.
         ///
-        /// @category core
+        /// @category settings
         ///
         #[ink(message)]
         pub fn get_rpc_endpoint(&self) -> Result<String> {
@@ -181,17 +224,28 @@ mod phala_faucet {
         }
 
         ///
-        /// @category core
+        /// Set the HTTP RPC endpoint, owner-only. It should begin with https:// or http://
+        ///
+        /// @category settings
         ///
         #[ink(message)]
         pub fn set_rpc_endpoint(&mut self, rpc_endpoint: String) -> Result<()> {
             self.ensure_owner()?;
-            self.rpc_endpoint = rpc_endpoint;
-            Ok(())
+            if rpc_endpoint.starts_with("https://") || rpc_endpoint.starts_with("http://") {
+                self.rpc_endpoint = rpc_endpoint;
+                Ok(())
+            } else {
+                Err(Error::BadOrigin)
+            }
         }
 
         ///
-        /// @category base
+        /// Set the allowance check script. Owner-only.
+        ///
+        /// @category settings
+        ///
+        /// @ui js_code widget codemirror
+        /// @ui js_code options.lang javascript
         ///
         #[ink(message)]
         pub fn set_account_check_js(&mut self, js_code: String) -> Result<()> {
@@ -201,7 +255,9 @@ mod phala_faucet {
         }
 
         ///
-        /// @category base
+        /// Inspect the allowance check script. Owner-only.
+        ///
+        /// @category settings
         ///
         #[ink(message)]
         pub fn get_account_check_js(&self) -> Result<String> {
@@ -210,11 +266,106 @@ mod phala_faucet {
         }
 
         ///
-        /// @category base
+        /// Get the base token amount for each claim.
+        ///
+        /// @category settings
         ///
         #[ink(message)]
-        pub fn account_check(&self) -> Result<bool> {
-            let caller_info = self.get_caller_info(self.env().caller(), Option::None);
+        pub fn get_base_token_amount(&self) -> u128 {
+            self.base_token_amount
+        }
+
+        ///
+        /// Set the base token amount for each claim. Owner-only.
+        ///
+        /// @category settings
+        ///
+        #[ink(message)]
+        pub fn set_base_token_amount(&mut self, amount: u128) -> Result<()> {
+            self.ensure_owner()?;
+            self.base_token_amount = amount;
+            Ok(())
+        }
+
+        ///
+        /// Get the balance threshold, if the balance of the caller is more than this threshold, it will be rejected.
+        ///
+        /// @category settings
+        ///
+        #[ink(message)]
+        pub fn get_balance_threshold(&self) -> Result<u128> {
+            Ok(self.balance_threshold)
+        }
+
+        ///
+        /// Set the balance threshold, if the balance of the caller is more than this threshold, it will be rejected. Owner-only.
+        ///
+        /// @category settings
+        ///
+        #[ink(message)]
+        pub fn set_balance_threshold(&mut self, amount: u128) -> Result<()> {
+            self.ensure_owner()?;
+            self.balance_threshold = amount;
+            Ok(())
+        }
+
+        ///
+        /// Get the claim peridical seconds, if the caller claimed in this period, it will be rejected.
+        ///
+        /// @category settings
+        ///
+        #[ink(message)]
+        pub fn get_claim_peridical_seconds(&self) -> Result<u64> {
+            Ok(self.claim_peridical_seconds)
+        }
+
+        ///
+        /// Set the claim peridical seconds, if the caller claimed in this period, it will be rejected. Owner-only.
+        ///
+        /// @category settings
+        ///
+        #[ink(message)]
+        pub fn set_claim_peridical_seconds(&mut self, seconds: u64) -> Result<()> {
+            self.ensure_owner()?;
+            self.claim_peridical_seconds = seconds;
+            Ok(())
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        //
+        // The primary actions for faucet core logic: claim, checking information, etc.
+        //
+        // -------------------------------------------------------------------------------------------------------------
+
+        ///
+        /// @category prime
+        ///
+        ///
+        #[ink(message)]
+        pub fn version(&self) -> VersionTuple {
+            version_tuple!()
+        }
+
+        ///
+        /// The SS58 format address of the faucet account
+        ///
+        /// @category prime
+        ///
+        #[ink(message)]
+        pub fn get_public_key(&self) -> AccountId {
+            let account_id: AccountId = self.public_key.into();
+            account_id
+        }
+
+        ///
+        /// Check caller allowance. It will return true if the caller is allowed to claim.
+        ///
+        /// @category prime
+        ///
+        #[ink(message)]
+        pub fn get_state(&self, evm_caller: Option<EvmCaller>) -> Result<State> {
+            let caller = self.env().caller();
+            let caller_info = self.get_caller_info(caller, evm_caller);
             let evm_address = if caller_info.evm_address.is_some() {
                 alloc::format!("0x{}", hex::encode(caller_info.evm_address.unwrap()))
             } else {
@@ -228,191 +379,38 @@ mod phala_faucet {
                 self.balance_threshold.to_string(),
                 self.claim_peridical_seconds.to_string(),
             ])?;
-            let result = js_result.parse::<bool>().unwrap();
-            Ok(result)
-        }
+            let can_claim = js_result.parse::<bool>().unwrap();
 
-        ///
-        /// @category proven
-        ///
-        #[ink(message)]
-        pub fn add_proven_script(&mut self, hash: [u8; 32]) -> Result<()> {
-            self.ensure_owner()?;
-            self.proven_script_hash.push(hash);
-            Ok(())
-        }
 
-        ///
-        /// @category proven
-        ///
-        #[ink(message)]
-        pub fn get_proven_scripts(&self) -> Vec<[u8; 32]> {
-            self.proven_script_hash.clone()
-        }
-
-        ///
-        /// @category proven
-        ///
-        #[ink(message)]
-        pub fn set_proven_script_secret(&mut self, hash: [u8; 32], secret: String) -> Result<()> {
-            self.ensure_owner()?;
-            self.proven_script_secrets.insert(hash, &secret);
-            Ok(())
-        }
-
-        ///
-        /// @category proven
-        ///
-        #[ink(message)]
-        pub fn get_proven_script_secret(&self, hash: [u8; 32]) -> Result<String> {
-            self.ensure_owner()?;
-            Ok(self.proven_script_secrets.get(&hash).unwrap_or_default())
-        }
-
-        ///
-        ///
-        /// @category proven
-        ///
-        /// @ui js_code widget codemirror
-        /// @ui js_code options.lang javascript
-        ///
-        #[ink(message)]
-        pub fn test_proven_script(&self, js_code: String, evm_caller: Option<EvmCaller>, secret: Option<String>) -> Result<ProvenResult> {
-            let context = self.get_caller_context_json(self.env().caller(), evm_caller);
-            let result = self.run_js_code(&js_code, alloc::vec![
-                context,
-                secret.unwrap_or("".into()),
-            ])?;
-
-            let hashed = self
-                .env()
-                .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes());
-            let message = alloc::format!("{}{}{}", hex::encode(self.env().caller()), hex::encode(hashed), result);
-            let signature = signing::sign(message.as_bytes(), &self.private_key, SigType::Sr25519);
-            let js_code_hash: [u8; 32] = hashed.into();
-
-            Ok(ProvenResult {
-                js_code_hash,
-                result: result.parse::<u128>().unwrap(),
-                signature,
-            })
-        }
-
-        ///
-        /// @category proven
-        ///
-        #[ink(message)]
-        pub fn run_proven_script(&self, js_code: String, evm_caller: Option<EvmCaller>) -> Result<ProvenResult> {
-            // check is it in the proven list
-            let hashed = self
-                .env()
-                .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes());
-            if self.proven_script_hash.iter().find(|&x| x == &hashed).is_none() {
-                return Err(Error::BadProvenScript);
-            }
-
-            let context = self.get_caller_context_json(self.env().caller(), evm_caller);
-            let secret = self.proven_script_secrets.get(hashed).unwrap_or("".into()).clone();
-            let result = self.run_js_code(&js_code, alloc::vec![
-                context,
-                secret,
-            ])?;
-
-            let message = alloc::format!("{}{}{}", hex::encode(self.env().caller()), hex::encode(hashed), result);
-            let signature = signing::sign(message.as_bytes(), &self.private_key, SigType::Sr25519);
-            let js_code_hash: [u8; 32] = hashed.into();
-
-            Ok(ProvenResult {
-                js_code_hash,
-                result: result.parse::<u128>().unwrap(),
-                signature,
-            })
-        }
-
-        ///
-        /// @category proven
-        ///
-        #[ink(message)]
-        pub fn save_proven_score(&mut self, result:ProvenResult) -> Result<()> {
-            let caller = self.env().caller();
-
-            if self.proven_script_hash.iter().find(|&x| x == &result.js_code_hash).is_none() {
-                return Err(Error::BadProvenScript);
-            }
-
-            // verify signature first.
-            let message = alloc::format!("{}{}{}", hex::encode(self.env().caller()), hex::encode(result.js_code_hash), result.result);
-            let pass = signing::verify(message.as_bytes(), &self.public_key, &result.signature, SigType::Sr25519);
-            if !pass {
-                return Err(Error::BadProvenScore)
-            }
-
-            let mut counts = 0;
-            let mut rec: Option<ProvenScore> = Option::None;
+            let mut eligibility: Vec<[u8; 32]> = Vec::new();
+            let mut amount = self.base_token_amount;
             for id in 0..self.next_id {
-                if let Some(record) = self.proven_scores.get(id) {
-                    if record.address == caller && record.js_code_hash == result.js_code_hash {
-                        rec = Some(record);
-                        break;
-                    }
-                    counts += 1;
-                }
-            }
-            if rec.is_some() {
-                let mut record = rec.unwrap();
-                record.score = result.result;
-                self.proven_scores.insert(counts, &record);
-            } else {
-                let record = ProvenScore {
-                    address: caller,
-                    js_code_hash: result.js_code_hash,
-                    score: result.result,
-                };
-                self.proven_scores.insert(self.next_id, &record);
-                self.next_id += 1;
-            }
-
-            Ok(())
-        }
-
-        ///
-        /// @category proven
-        ///
-        #[ink(message)]
-        pub fn get_proven_score(&self) -> Result<u128> {
-            let caller = self.env().caller();
-            let mut scores = 0;
-            for id in 0..self.next_id {
-                if let Some(record) = self.proven_scores.get(id) {
+                if let Some(record) = self.quest_result.get(id) {
                     if record.address == caller {
-                        scores += record.score;
+                        eligibility.push(record.js_code_hash);
+                        amount += record.score * 1_000_000_000_000_u128;
                     }
                 }
             }
-            Ok(scores)
-        }
 
-        ///
-        /// @category proven
-        ///
-        #[ink(message)]
-        pub fn get_all_proven_scores(&self) -> Result<Vec<ProvenScore>> {
-            let mut scores = Vec::new();
-            for id in 0..self.next_id {
-                if let Some(record) = self.proven_scores.get(id) {
-                    scores.push(record);
-                }
-            }
-            Ok(scores)
+            Ok(State {
+                can_claim,
+                claim_estimated_amount: amount,
+                base_token_amount: self.base_token_amount,
+                balance_threshold: self.balance_threshold,
+                claim_peridical_seconds: self.claim_peridical_seconds,
+                eligibility,
+                registered_quests: self.quest_script_hash.clone(),
+            })
         }
 
         ///
         /// The faucet will transfer test-PHA to the caller.
         ///
-        /// @category faucet
+        /// @category prime
         ///
         #[ink(message)]
-        pub fn claim(&self, evm_caller: Option<EvmCaller>) -> Result<FaucetResult> {
+        pub fn claim(&self, evm_caller: Option<EvmCaller>) -> Result<ClaimResult> {
             let caller = self.env().caller();
             let caller_info = self.get_caller_info(caller, evm_caller);
             let evm_address = if caller_info.evm_address.is_some() {
@@ -434,38 +432,241 @@ mod phala_faucet {
 
             let mut amount = self.base_token_amount;
             for id in 0..self.next_id {
-                if let Some(record) = self.proven_scores.get(id) {
+                if let Some(record) = self.quest_result.get(id) {
                     if record.address == caller {
                         amount += record.score * 1_000_000_000_000_u128;
                     }
                 }
             }
-            pink::info!("{}", alloc::format!("Claim amount: {}", amount));
-
-            pink::info!("{}", self.chain);
-            pink::info!("{}", self.rpc_endpoint);
 
             let recipient: MultiAddress<AccountId, u32>  = MultiAddress::Id(Self::env().caller());
             let signed_tx = create_transaction(
                 &self.private_key,
                 &self.chain,
                 &self.rpc_endpoint,
-                0x07u8,
-                0x00u8,
+                self.call_index.0,
+                self.call_index.1,
                 (recipient, Compact(amount)),
                 ExtraParam::default(),
             )
             .unwrap();
-            let tx_id = send_transaction(&self.rpc_endpoint, &signed_tx).unwrap();
-            Ok(FaucetResult {
-                tx_id,
-                amount,
+            let result = send_transaction(&self.rpc_endpoint, &signed_tx);
+            if result.is_ok() {
+                Ok(ClaimResult {
+                    tx_id: result.unwrap(),
+                    amount,
+                })
+            } else {
+                Err(Error::SubstrateTransactionFailed)
+            }
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        //
+        // Quests
+        //
+        // -------------------------------------------------------------------------------------------------------------
+
+        ///
+        /// @category quests
+        ///
+        #[ink(message)]
+        pub fn add_quest_script(&mut self, hash: [u8; 32]) -> Result<()> {
+            self.ensure_owner()?;
+            self.quest_script_hash.push(hash);
+            Ok(())
+        }
+
+        ///
+        /// @category quests
+        ///
+        #[ink(message)]
+        pub fn get_all_registered_quest_script_hash(&self) -> Vec<[u8; 32]> {
+            self.quest_script_hash.clone()
+        }
+
+        ///
+        /// @category quests
+        ///
+        #[ink(message)]
+        pub fn set_quest_script_secret(&mut self, hash: [u8; 32], secret: String) -> Result<()> {
+            self.ensure_owner()?;
+            self.quest_script_secrets.insert(hash, &secret);
+            Ok(())
+        }
+
+        ///
+        /// @category quests
+        ///
+        #[ink(message)]
+        pub fn get_quest_script_secret(&self, hash: [u8; 32]) -> Result<String> {
+            self.ensure_owner()?;
+            Ok(self.quest_script_secrets.get(&hash).unwrap_or_default())
+        }
+
+        ///
+        /// @category quests
+        ///
+        /// @ui js_code widget codemirror
+        /// @ui js_code options.lang javascript
+        ///
+        #[ink(message)]
+        pub fn test_quest_script(&self, js_code: String, evm_caller: Option<EvmCaller>, secret: Option<String>) -> Result<QuestResult> {
+            let context = self.get_caller_context_json(self.env().caller(), evm_caller);
+            let result = self.run_js_code(&js_code, alloc::vec![
+                context,
+                secret.unwrap_or("".into()),
+            ])?;
+
+            let hashed = self
+                .env()
+                .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes());
+            let message = alloc::format!("{}{}{}", hex::encode(self.env().caller()), hex::encode(hashed), result);
+            let signature = signing::sign(message.as_bytes(), &self.private_key, SigType::Sr25519);
+            let js_code_hash: [u8; 32] = hashed.into();
+
+            Ok(QuestResult {
+                js_code_hash,
+                result: result.parse::<u128>().unwrap(),
+                signature,
             })
         }
 
         ///
-        /// Helpers
+        /// @category quests
         ///
+        /// @ui js_code widget codemirror
+        /// @ui js_code options.lang javascript
+        ///
+        #[ink(message)]
+        pub fn run_quest_script(&self, js_code: String, evm_caller: Option<EvmCaller>) -> Result<QuestResult> {
+            // check is it in the registered quest list
+            let hashed = self
+                .env()
+                .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes());
+            if self.quest_script_hash.iter().find(|&x| x == &hashed).is_none() {
+                return Err(Error::BadQuestScript);
+            }
+
+            let context = self.get_caller_context_json(self.env().caller(), evm_caller);
+            let secret = self.quest_script_secrets.get(hashed).unwrap_or("".into()).clone();
+            let result = self.run_js_code(&js_code, alloc::vec![
+                context,
+                secret,
+            ])?;
+
+            let message = alloc::format!("{}{}{}", hex::encode(self.env().caller()), hex::encode(hashed), result);
+            let signature = signing::sign(message.as_bytes(), &self.private_key, SigType::Sr25519);
+            let js_code_hash: [u8; 32] = hashed.into();
+
+            Ok(QuestResult {
+                js_code_hash,
+                result: result.parse::<u128>().unwrap(),
+                signature,
+            })
+        }
+
+        ///
+        /// @category quests
+        ///
+        #[ink(message)]
+        pub fn save_quest_result(&mut self, result:QuestResult) -> Result<()> {
+            let caller = self.env().caller();
+
+            if self.quest_script_hash.iter().find(|&x| x == &result.js_code_hash).is_none() {
+                return Err(Error::BadQuestScript);
+            }
+
+            // verify signature first.
+            let message = alloc::format!("{}{}{}", hex::encode(self.env().caller()), hex::encode(result.js_code_hash), result.result);
+            let pass = signing::verify(message.as_bytes(), &self.public_key, &result.signature, SigType::Sr25519);
+            if !pass {
+                return Err(Error::BadQuestResultStore)
+            }
+
+            let mut counts = 0;
+            let mut rec: Option<QuestResultStore> = Option::None;
+            for id in 0..self.next_id {
+                if let Some(record) = self.quest_result.get(id) {
+                    if record.address == caller && record.js_code_hash == result.js_code_hash {
+                        rec = Some(record);
+                        break;
+                    }
+                    counts += 1;
+                }
+            }
+            if rec.is_some() {
+                let mut record = rec.unwrap();
+                record.score = result.result;
+                self.quest_result.insert(counts, &record);
+            } else {
+                let record = QuestResultStore {
+                    address: caller,
+                    js_code_hash: result.js_code_hash,
+                    score: result.result,
+                };
+                self.quest_result.insert(self.next_id, &record);
+                self.next_id += 1;
+            }
+
+            Ok(())
+        }
+
+        ///
+        /// Get all quest result, owner-only.
+        ///
+        /// @category quests
+        ///
+        #[ink(message)]
+        pub fn get_all_quest_result(&self) -> Result<Vec<QuestResultStore>> {
+            self.ensure_owner()?;
+            let mut scores = Vec::new();
+            for id in 0..self.next_id {
+                if let Some(record) = self.quest_result.get(id) {
+                    scores.push(record);
+                }
+            }
+            Ok(scores)
+        }
+
+        ///
+        /// Import all quest result, owner-only. It propose for the contract upgradable.
+        ///
+        /// @category quests
+        ///
+        #[ink(message)]
+        pub fn import_all_quest_result(&mut self, results: Vec<QuestResultStore>) -> Result<()> {
+            self.ensure_owner()?;
+            for result in results {
+                let mut counts = 0;
+                let mut rec: Option<QuestResultStore> = Option::None;
+                for id in 0..self.next_id {
+                    if let Some(record) = self.quest_result.get(id) {
+                        if record.address == result.address && record.js_code_hash == result.js_code_hash {
+                            rec = Some(record);
+                            break;
+                        }
+                        counts += 1;
+                    }
+                }
+                if rec.is_some() {
+                    let mut record = rec.unwrap();
+                    record.score = result.score;
+                    self.quest_result.insert(counts, &record);
+                } else {
+                    self.quest_result.insert(self.next_id, &result);
+                    self.next_id += 1;
+                }
+            }
+            Ok(())
+        }
+
+        //
+        // -------------------------------------------------------------------------------------------------------------
+        //
+        // Helpers
+        //
+        // -------------------------------------------------------------------------------------------------------------
 
         fn ensure_owner(&self) -> Result<()> {
             if self.env().caller() == self.owner {
