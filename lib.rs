@@ -120,6 +120,11 @@ mod phala_faucet {
     // Events
 
     #[ink(event)]
+    pub struct FaucetCreated {
+        owner: AccountId,
+    }
+
+    #[ink(event)]
     pub struct QuestScriptRegistered {
         hash: [u8; 32],
     }
@@ -157,6 +162,10 @@ mod phala_faucet {
         /// - balance_threshold: The balance threshold, if the balance of the caller is more than this threshold, it will be rejected. Optional, default is 5,000 PHA.
         /// - claim_peridical_seconds: The claim peridical seconds, if the caller claimed in this period, it will be rejected. Optional, default is 24 hours.
         ///
+        /// @ui rpc_endpoint default "https://poc6.phala.network/ws"
+        /// @ui account_check_js widget codemirror
+        /// @ui account_check_js options.lang javascript
+        ///
         #[ink(constructor)]
         pub fn default(
             salt: Option<String>, rpc_endpoint: String, chain: Option<String>, call_index: Option<(u8, u8)>, account_check_js: Option<String>,
@@ -167,7 +176,7 @@ mod phala_faucet {
             let public_key = signing::get_public_key(&private_key, SigType::Sr25519)
                 .try_into()
                 .unwrap();
-            Self {
+            let instance = Self {
                 owner: Self::env().caller(),
                 public_key,
                 private_key,
@@ -182,7 +191,11 @@ mod phala_faucet {
                 balance_threshold: balance_threshold.unwrap_or(1_000_000_000_000_u128 * 5_000),  // 5,000 PHA
                 claim_peridical_seconds: claim_peridical_seconds.unwrap_or(60 * 60 * 24),        // 24 hours
                 account_check_js: account_check_js.unwrap_or("(() => { return true; })();".into()),
-            }
+            };
+            instance.env().emit_event(FaucetCreated {
+                owner: Self::env().caller(),
+            });
+            instance
         }
 
         // -------------------------------------------------------------------------------------------------------------
@@ -826,7 +839,6 @@ mod phala_faucet {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use hex::FromHex;
 
         #[ink::test]
         fn it_works() {
