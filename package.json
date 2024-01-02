@@ -1,0 +1,12 @@
+{
+  "name": "phala-faucet",
+  "version": "0.0.1",
+  "main": "index.js",
+  "license": "MIT",
+  "devDependencies": {
+    "@phala/fn": "^0.2.4",
+    "@phala/pink-env": "^1.0.10",
+    "@types/node": "^20.9.0",
+    "typescript": "^5.2.2"
+  }
+}

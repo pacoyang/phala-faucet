@@ -1,12 +1,13 @@
 [package]
 name = "phala_faucet"
-version = "0.1.0"
+version = "0.3.3"
 authors = ["[your_name] <[your_email]>"]
 edition = "2021"
 
 [dependencies]
 ink = { version = "4.2.0", default-features = false }
 
+this-crate = "0.1.0"
 pink-extension = { version = "0.4", default-features = false }
 pink-subrpc = { version = "0.4.2", default-features = false }
 pink-web3 = { version = "0.20.1", default-features = false, features = ["pink", "signing"] }
